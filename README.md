@@ -51,7 +51,7 @@ For each gene, `compoundDE()` returns a `TC_ratio` in \[0, 1\]:
 ## Installation
 
 ```r
-# From Bioconductor (once accepted)
+# From Bioconductor
 BiocManager::install("scCompoundDE")
 
 # Development version from GitHub

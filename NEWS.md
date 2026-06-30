@@ -1,3 +1,9 @@
+# scCompoundDE 0.99.1
+
+## Bug fixes
+
+* Improve overall stability.
+
 # scCompoundDE 0.99.0
 
 ## New features

@@ -53,6 +53,26 @@ Standard tools cannot answer this question. They treat the pseudo-bulk
 as a homogeneous entity. `scCompoundDE` decomposes every DE gene into
 these two orthogonal components.
 
+## Integration with Bioconductor workflows
+
+`scCompoundDE` is designed to fit into standard Bioconductor single-cell
+workflows without introducing a package-specific input object. The main
+function, `compoundDE`, accepts a `SingleCellExperiment` object, reads raw
+counts from an assay such as `assay(sce, "counts")`, and uses sample,
+condition, broad cell type, and subtype annotations stored in `colData`.
+This allows users to pass the same object through quality control,
+annotation, pseudo-bulk differential expression, and decomposition steps.
+
+A typical workflow is to perform batch-aware cell-level quality control
+with `scBatchQC`, run donor-aware pseudo-bulk differential expression with
+`scFastDE` or another Bioconductor DE workflow, and then use
+`scCompoundDE` to decide whether the observed broad pseudo-bulk signal is
+primarily transcriptional or compositional. The result is returned as a
+`CDEResult` S4 object containing a `S4Vectors::DataFrame` of per-gene
+statistics, a subtype proportion matrix, and per-subtype DE tables, so the
+output can be filtered, plotted, or passed to downstream Bioconductor-style
+analyses.
+
 ## The TC_ratio score
 
 For each gene, `compoundDE` returns a `TC_ratio` in \[0, 1\]:
@@ -129,14 +149,26 @@ result
 
 ## Inspecting results
 
+The `deTable` accessor returns one row per tested gene. In addition to the
+broad pseudo-bulk DE statistics (`logFC`, `P.Value`, and `adj.P.Val`), it
+contains the decomposition scores used by `scCompoundDE`: `T_score` for the
+transcriptional component, `C_score` for the compositional component,
+`TC_ratio` for their relative contribution, and `source` for the final
+classification.
+
 ```{r inspect_results}
 dt <- as.data.frame(deTable(result))
 dt_sorted <- dt[order(dt$adj.P.Val), ]
-head(dt_sorted[, c("gene","logFC","adj.P.Val","TC_ratio","source")], 15)
+head(dt_sorted[, c("gene","logFC","adj.P.Val",
+                   "T_score","C_score","TC_ratio","source")], 15)
 ```
 
 The injected genes (Gene1–Gene10) should have high TC_ratio values,
-confirming they were detected as transcriptionally driven.
+confirming they were detected as transcriptionally driven. In a real
+analysis, genes classified as `transcriptional` are the strongest
+candidates for cell-intrinsic biology, genes classified as `compositional`
+should be interpreted as possible subtype-abundance effects, and genes
+classified as `mixed` require inspection of both scores.
 
 ```{r tc_of_injected}
 injected <- dt[dt$gene %in% paste0("Gene", seq_len(10)), ]
@@ -146,19 +178,40 @@ cat("All injected genes classified as transcriptional:",
     all(injected$source == "transcriptional", na.rm = TRUE), "\n")
 ```
 
-## Visualisations
+## Visualizations
 
-```{r plot_decomp, fig.cap="Scatter of transcriptional vs compositional z-scores. Blue = transcriptional, red = compositional, orange = mixed. Injected genes appear in the top-right (high T, low C)."}
+The plotting functions provide complementary diagnostics for the
+decomposition. `plotDecomposition` shows whether significant genes are
+driven mainly by the transcriptional or compositional axis, `plotTCRatio`
+summarizes the distribution of gene classifications, and `plotProportion`
+checks whether subtype proportions differ between conditions enough to
+explain compositional signals.
+
+```{r plot_decomp, fig.cap="Scatter of transcriptional vs compositional z-scores. Blue = transcriptional, red = compositional, orange = mixed. Injected genes appear with high T and low C scores."}
 plotDecomposition(result, fdr_thresh = 0.05, top_n = 10)
 ```
+
+In the transcriptional simulation, the top injected genes should have large
+transcriptional scores and relatively small compositional scores. Points
+near the compositional axis would instead indicate genes whose broad
+pseudo-bulk fold-change is explained by subtype abundance shifts.
 
 ```{r plot_tc, fig.cap="Distribution of TC_ratio scores. Vertical lines show classification thresholds at 0.2 and 0.8."}
 plotTCRatio(result, fdr_thresh = 0.05)
 ```
 
+The TC_ratio histogram is useful as a quick summary of the experiment. A
+distribution concentrated near 1 suggests that most significant genes are
+cell-intrinsic, whereas a distribution concentrated near 0 suggests that
+the broad DE result is strongly affected by composition.
+
 ```{r plot_prop, fig.cap="Subtype proportions per condition. Balanced design — equal TypeA and TypeB in both conditions."}
 plotProportion(result)
 ```
+
+The proportion plot should be read together with the decomposition plot. If
+one subtype expands or contracts between conditions, genes expressed mainly
+in that subtype are more likely to receive low TC_ratio values.
 
 # Simulated example: purely compositional signal
 
@@ -229,15 +282,27 @@ print(gene1)
 ```
 
 Gene1 will have a significant p-value (broad DE is strong) but a low
-TC_ratio, correctly identifying it as a compositional artefact.
+TC_ratio, correctly identifying it as a compositional artefact. This is the
+case where `scCompoundDE` is most useful: the broad pseudo-bulk test
+detects a real difference between conditions, but the decomposition shows
+that the difference is caused by the changing mixture of subtypes rather
+than a cell-intrinsic expression shift.
 
 ```{r plot_comp_decomp, fig.cap="With compositional signal, Gene1 sits at high C_score / low T_score."}
 plotDecomposition(result2, fdr_thresh = 0.05, top_n = 5)
 ```
 
+Here, Gene1 should move toward the compositional side of the plot. The
+interpretation is different from an ordinary DE table: a small adjusted
+p-value alone is not enough to call the gene transcriptionally altered.
+
 ```{r plot_comp_prop, fig.cap="Clear proportion shift: TypeB increases dramatically in treatment."}
 plotProportion(result2)
 ```
+
+The subtype proportion plot provides the biological reason for the low
+TC_ratio. TypeB cells are more common in treatment, and Gene1 is a TypeB
+marker, so the broad pseudo-bulk signal is explained by composition.
 
 # Filtering by source
 
@@ -260,6 +325,14 @@ cat("\nCompositional genes (any FDR):", nrow(compositional_genes), "\n")
 ```
 
 # Recommended workflow
+
+The same pattern applies to real Bioconductor workflows. `scBatchQC` can be
+used first to add batch-aware QC calls to `colData`, `scFastDE` can then
+perform fast donor-weighted pseudo-bulk DE on the cleaned
+`SingleCellExperiment`, and `scCompoundDE` can decompose the resulting
+broad signal for a selected cell population. Users may also substitute
+other Bioconductor QC, annotation, or pseudo-bulk tools, provided the input
+object contains counts and the required sample annotations.
 
 ```{r workflow, eval=FALSE}
 # Step 1: QC with scBatchQC
