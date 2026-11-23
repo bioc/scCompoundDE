@@ -2,7 +2,7 @@ Package: scCompoundDE
 Type: Package
 Title: Compositional and Transcriptional Decomposition of Pseudo-Bulk
     Differential Expression
-Version: 1.0.0
+Version: 1.1.0
 Authors@R: c(
     person("Subhadip", "Jana", role = c("aut", "cre"),
            email = "subhadipjana1409@gmail.com",
